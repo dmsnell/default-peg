@@ -15,25 +15,26 @@ const blockList = augment( function blockList( document, index ) {
 
 	const output = [];
 	for ( let i = 0; i < blocks[ 1 ].length; i++ ) {
-		const nextBlock = blocks[ 1 ][ i ];
-		for ( let j = 0; j < nextBlock.length; j++ ) {
+		const nextBlockSet = [].concat( blocks[ 1 ][ i ] );
+		for ( let j = 0; j < nextBlockSet.length; j++ ) {
+			const nextBlock = nextBlockSet[ j ];
 			const lastOutput = output[ output.length - 1 ];
 
-			if ( null === nextBlock[ j ] ) {
+			if ( null === nextBlock ) {
 				continue;
-			} else if ( 'string' === typeof nextBlock[ j ] && ( ! lastOutput || null !== lastOutput.blockName ) ) {
-				output.push( { blockName: null, attrs: {}, innerBlocks: [], innerContent: [ nextBlock[ j ] ], innerHTML: nextBlock[ j ] } );
-			} else if ( 'string' === typeof nextBlock[ j ] && ( lastOutput && null === lastOutput.blockName ) ){
-				lastOutput.innerContent[ 0 ] += nextBlock[ j ];
-				lastOutput.innerHTML += nextBlock[ j ];
-			} else if ( null === nextBlock[ j ].blockName && ( ! lastOutput || null !== lastOutput.blockName ) ) {
-				output.push( { blockName: null, attrs: {}, innerBlocks: [], innerContent: [ nextBlock[ j ].innerHTML ], innerHTML: nextBlock[ j ].innerHTML } );
-			} else if ( null === nextBlock[ j ].blockName && ( lastOutput && null === lastOutput.blockName ) ) {
-				lastOutput.innerContent[ 0 ] += nextBlock[ j ].innerHTML;
-				lastOutput.innerHTML += nextBlock[ j ].innerHTML;
+			} else if ( 'string' === typeof nextBlock && ( ! lastOutput || null !== lastOutput.blockName ) ) {
+				output.push( { blockName: null, attrs: {}, innerBlocks: [], innerContent: [ nextBlock ], innerHTML: nextBlock } );
+			} else if ( 'string' === typeof nextBlock && ( lastOutput && null === lastOutput.blockName ) ){
+				lastOutput.innerContent[ 0 ] += nextBlock;
+				lastOutput.innerHTML += nextBlock;
+			} else if ( null === nextBlock.blockName && ( ! lastOutput || null !== lastOutput.blockName ) ) {
+				output.push( { blockName: null, attrs: {}, innerBlocks: [], innerContent: [ nextBlock.innerHTML ], innerHTML: nextBlock.innerHTML } );
+			} else if ( null === nextBlock.blockName && ( lastOutput && null === lastOutput.blockName ) ) {
+				lastOutput.innerContent[ 0 ] += nextBlock.innerHTML;
+				lastOutput.innerHTML += nextBlock.innerHTML;
 				continue;
 			} else {
-				output.push( nextBlock[ j ] );
+				output.push( nextBlock );
 			}
 		}
 	}
@@ -46,54 +47,44 @@ const blockList = augment( function blockList( document, index ) {
 } );
 
 const block = augment( function block( document, index ) {
-	const opener = /<!--\s+wp:([a-z][a-z0-9_-]*\/)?([a-z][a-z0-9_-]*)\s+({(?:[^}]+|}+(?=})|(?!}\s+-->)[^])*?}\s+)?(\/)?-->/g;
-	opener.lastIndex = index;
-	const opening = opener.exec( document );
-
-	if ( null === opening || opening.index !== index ) {
+	const opener = blockOpener( document, index );
+	
+	if ( ! opener ) {
 		return null;
 	}
 
-	const namespaceMatch = opening[ 1 ];
-	const nameMatch = opening[ 2 ];
-	const attrsMatch = opening[ 3 ];
-	const voidMatch = opening[ 4 ];
-
-	const isVoid = !! voidMatch;
-	const namespace = namespaceMatch || 'core/';
-	const name = namespace + nameMatch;
-	const hasAttrs = !! attrsMatch;
-	const attrs = hasAttrs ? JSON.parse( attrsMatch ) : {};
+	const openerEnd = opener[ 0 ];
+	const blockName = opener[ 1 ][ 0 ];
+	const attrs = opener[ 1 ][ 1 ];
+	const isVoid = opener[ 1 ][ 2 ];
 
 	if ( isVoid ) {
-		const next = {
-			blockName: name,
-			attrs: attrs,
-			innerBlocks: [],
-			innerHTML: '',
-			innerContent: []
-		};
-
-		return [ opener.lastIndex, [ next ] ]
+		return [ 
+			openerEnd,
+			{
+				blockName: blockName,
+				attrs: attrs,
+				innerBlocks: [],
+				innerHTML: '',
+				innerContent: []
+			}
+		]
 	}
 
 	const innerBlockPairs = zeroOrMore(
 		choice(
 			block,
-			sequence(
-				not( block ),
-				not( ( doc, idx ) => patternMatch( doc, idx, /<!--\s+\/wp:([a-z][a-z0-9_-]*\/)?([a-z][a-z0-9_-]*)\s+-->/ ) ),
-				any
-			)
-		) )( document, opener.lastIndex );
+			sequence( not( block ), not( blockCloser ), any )
+		) 
+	)( document, openerEnd );
 
 	let innerHTML = '';
 	const innerBlocks = [];
 	const innerContent = [];
 	for ( let i = 0; i < innerBlockPairs[ 1 ].length; i++ ) {
-		const nextBlockPair = innerBlockPairs[ 1 ][ i ];
-		for ( let j = 0; j < nextBlockPair.length; j++ ) {
-			const nextBlock = nextBlockPair[ j ];
+		const nextBlockSet = [].concat( innerBlockPairs[ 1 ][ i ] );
+		for ( let j = 0; j < nextBlockSet.length; j++ ) {
+			const nextBlock = nextBlockSet[ j ];
 
 			if ( null === nextBlock ) {
 				continue;
@@ -122,29 +113,67 @@ const block = augment( function block( document, index ) {
 		}
 	}
 
-	const closer = /<!--\s+\/wp:([a-z][a-z0-9_-]*\/)?([a-z][a-z0-9_-]*)\s+-->/g;
-	closer.lastIndex = innerBlockPairs[ 0 ];
-	const closing = closer.exec( document );
+	const closing = blockCloser( document, innerBlockPairs[ 0 ] );
 
 	if ( null === closing ) {
 		return null;
 	}
 
-	if ( innerBlockPairs[ 0 ] < closing.index ) {
-		const html = document.slice( innerBlockPairs[ 0 ], closing.index );
-		innerHTML += html;
-		innerContent.push( html );
+	return [ 
+		closing[ 0 ], 
+		{
+			blockName: blockName,
+			attrs: attrs,
+			innerBlocks: innerBlocks,
+			innerHTML: innerHTML,
+			innerContent: innerContent
+		}
+	]
+} );
+
+var blockCloser = augment( function blockOpener( document, index ) {
+	const closer = /<!--\s+\/wp:([a-z][a-z0-9_-]*\/)?([a-z][a-z0-9_-]*)\s+-->/g;
+	closer.lastIndex = index;
+	const closing = closer.exec( document );
+
+	if ( ! closing || closing.index !== index ) {
+		return null;
 	}
 
-	const next = {
-		blockName: name,
-		attrs: attrs,
-		innerBlocks: innerBlocks,
-		innerHTML: innerHTML,
-		innerContent: innerContent
-	};
+	const namespaceMatch = closing[ 1 ];
+	const nameMatch = closing[ 2 ];
+	const namespace = namespaceMatch || 'core/';
+	const blockName = namespace + nameMatch;
 
-	return [ closer.lastIndex, [ next ] ]
+	return [ closer.lastIndex, blockName ];
+} );
+
+const blockOpener = augment( function blockOpener( document, index ) {
+	const opener = /<!--\s+wp:([a-z][a-z0-9_-]*\/)?([a-z][a-z0-9_-]*)\s+({(?:[^}]+|}+(?=})|(?!}\s+-->)[^])*?}\s+)?(\/)?-->/g;
+	opener.lastIndex = index;
+	const opening = opener.exec( document );
+
+	if ( ! opening || opening.index !== index ) {
+		return null;
+	}
+
+	const namespaceMatch = opening[ 1 ];
+	const nameMatch = opening[ 2 ];
+	const attrsMatch = opening[ 3 ];
+	const voidMatch = opening[ 4 ];
+
+	const isVoid = !! voidMatch;
+	const namespace = namespaceMatch || 'core/';
+	const blockName = namespace + nameMatch;
+	const hasAttrs = !! attrsMatch;
+	let attrs = hasAttrs ? attrsMatch : '{}';
+	try {
+		attrs = JSON.parse( attrs );
+	} catch ( e ) {
+		return null;
+	}
+
+	return [ opener.lastIndex, [ blockName, attrs, isVoid ] ];
 } );
 
 /////////////////////////////////////////////////////////////////////
@@ -188,13 +217,13 @@ function patternMatch( document, index, pattern ) {
 
 function zeroOrMore( parser ) {
 	return ( document, index ) => {
-		const things = [];
+		let things = [];
 		let lastIndex = index;
 		let thing = parser( document, lastIndex );
 
 		while ( thing ) {
 			lastIndex = thing[ 0 ];
-			things.push( thing[ 1 ] );
+			things = things.concat( Array.isArray( thing[ 1 ] ) ? [ thing[ 1 ] ] : thing[ 1 ] );
 
 			thing = parser( document, lastIndex );
 		}
@@ -205,7 +234,7 @@ function zeroOrMore( parser ) {
 
 function oneOrMore( parser ) {
 	return ( document, index ) => {
-		const things = [];
+		let things = [];
 		let lastIndex = index;
 		let thing = parser( document, lastIndex );
 
@@ -215,7 +244,7 @@ function oneOrMore( parser ) {
 
 		while ( thing ) {
 			lastIndex = thing[ 0 ];
-			things.push( thing[ 1 ] );
+			things = things.concat( Array.isArray( thing[ 1 ] ) ? [ thing[ 1 ] ] : thing[ 1 ] );
 
 			thing = parser( document, lastIndex );
 		}
@@ -245,7 +274,7 @@ function not( parser ) {
 	return ( document, index ) => {
 		const match = parser( document, index );
 
-		return match ? null : [ index, [] ];
+		return match ? null : [ index, null ];
 	};
 }
 
@@ -262,8 +291,11 @@ function sequence( ...parsers ) {
 				return null;
 			}
 
+			if ( lastIndex !== thing[ 0 ] ) {
+				things = things.concat( Array.isArray( thing[ 1 ] ) ? [ thing[ 1 ] ] : thing[ 1 ] );
+			}
+
 			lastIndex = thing[ 0 ];
-			things = things.concat( thing[ 1 ] );
 		}
 
 		return [ lastIndex, things ];
@@ -292,6 +324,8 @@ function augment( f ) {
 module.exports = {
 	blockList: blockList,
 	block: block,
+	blockCloser: blockCloser,
+	blockOpener: blockOpener,
 	choice: choice,
 	not: not,
 	oneOrMore: oneOrMore,

@@ -2,6 +2,8 @@ const parser = require( '../index.js' );
 
 const blockList = parser.blockList;
 const block = parser.block;
+const blockCloser = parser.blockCloser;
+const blockOpener = parser.blockOpener;
 const choice = parser.choice;
 const not = parser.not;
 const oneOrMore = parser.oneOrMore;
@@ -11,7 +13,7 @@ const zeroOrMore = parser.zeroOrMore;
 
 describe( 'parser combinators', () => {
     const fail = ( document, index ) => null;
-    const succeed = ( document, index ) => [ index, [ true ] ];
+    const succeed = ( document, index ) => [ index + 1, [ true ] ];
 
     describe( 'zeroOrMore', () => {
         test( 'zero matches', () => {
@@ -34,6 +36,12 @@ describe( 'parser combinators', () => {
             const a = ( doc, index ) => doc[ index ] === 'a' ? [ index + 1, 'a' ] : null;
 
             expect( zeroOrMore( a )( 'aaaaaa', 0 ) ).toEqual( [ 6, [ 'a', 'a', 'a', 'a', 'a', 'a' ] ] );
+        } );
+
+        test( 'multiple arrays', () => {
+            const a = ( doc, index ) => doc[ index ] === 'a' ? [ index + 1, [ 'a' ] ] : null;
+
+            expect( zeroOrMore( a )( 'aaa', 0 ) ).toEqual( [ 3, [ [ 'a' ], [ 'a' ], [ 'a' ] ] ] );
         } );
     } );
 
@@ -59,19 +67,25 @@ describe( 'parser combinators', () => {
 
             expect( oneOrMore( a )( 'aaaaaa', 0 ) ).toEqual( [ 6, [ 'a', 'a', 'a', 'a', 'a', 'a' ] ] );
         } );
+
+        test( 'multiple arrays', () => {
+            const a = ( doc, index ) => doc[ index ] === 'a' ? [ index + 1, [ 'a' ] ] : null;
+
+            expect( oneOrMore( a )( 'aaa', 0 ) ).toEqual( [ 3, [ [ 'a' ], [ 'a' ], [ 'a' ] ] ] );
+        } );
     } );
 
     describe( 'choice', () => {
         test( 'one parser', () => {
-            expect( choice( succeed )( 'test', 0 ) ).toEqual( [ 0, [ true ] ] );
+            expect( choice( succeed )( 'test', 0 ) ).toEqual( [ 1, [ true ] ] );
         } );
 
         test( 'two parsers, first succeeds', () => {
-            expect( choice( succeed, fail )( 'test', 0 ) ).toEqual( [ 0, [ true ] ] );
+            expect( choice( succeed, fail )( 'test', 0 ) ).toEqual( [ 1, [ true ] ] );
         } );
 
         test( 'two parsers, first fails', () => {
-            expect( choice( fail, succeed )( 'test', 0 ) ).toEqual( [ 0, [ true ] ] );
+            expect( choice( fail, succeed )( 'test', 0 ) ).toEqual( [ 1, [ true ] ] );
         } );
 
         test( 'two parsers, both fail', () => {
@@ -88,7 +102,7 @@ describe( 'parser combinators', () => {
 
     describe( 'sequence', () => {
         test( 'succeeds with all', () => {
-            expect( sequence( succeed, succeed, succeed )( '', 0 ) ).toEqual( [ 0, [ true, true, true ] ] );
+            expect( sequence( succeed, succeed, succeed )( '', 0 ) ).toEqual( [ 3, [ [ true ], [ true ], [ true ] ] ] );
         } );
 
         test( 'fails with one', () => {
@@ -100,21 +114,21 @@ describe( 'parser combinators', () => {
 
     describe( 'not', () => {
         test( 'fails on match', () => {
-            const match = ( doc, index ) => doc[ index ] === 'a' ? [ index + 1, [ 'a' ] ] : null;
+            const match = ( doc, index ) => doc[ index ] === 'a' ? [ index + 1, 'a' ] : null;
 
-            expect( match( 'a', 0 ) ).toEqual( [ 1, [ 'a' ] ] );
+            expect( match( 'a', 0 ) ).toEqual( [ 1, 'a' ] );
             expect( match( 'b', 0 ) ).toBeNull();
 
             expect( not( match )( 'a', 0 ) ).toBeNull();
         } );
 
         test( 'succeeds on no-match', () => {
-            const match = ( doc, index ) => doc[ index ] === 'a' ? [ index + 1, [ 'a' ] ] : null;
+            const match = ( doc, index ) => doc[ index ] === 'a' ? [ index + 1, 'a' ] : null;
 
-            expect( match( 'a', 0 ) ).toEqual( [ 1, [ 'a' ] ] );
+            expect( match( 'a', 0 ) ).toEqual( [ 1, 'a' ] );
             expect( match( 'b', 0 ) ).toBeNull();
 
-            expect( sequence( not( match ), succeed )( 'b', 0 ) ).toEqual( [ 0, [ true ] ] );
+            expect( sequence( not( match ), succeed )( 'b', 0 ) ).toEqual( [ 1, [ [ true ] ] ] );
         } );
     } );
 } );
@@ -274,57 +288,73 @@ describe( 'parser components', () => {
 
     describe( 'block', () => {
         test( 'void block', () => {
-            expect( block( '<!-- wp:void /-->', 0 ) ).toEqual( [ 17, [ {
-                blockName: 'core/void',
-                attrs: {},
-                innerBlocks: [],
-                innerHTML: '',
-                innerContent: []
-            } ] ] );
+            expect( block( '<!-- wp:void /-->', 0 ) ).toEqual( [
+                17,
+                {
+                    blockName: 'core/void',
+                    attrs: {},
+                    innerBlocks: [],
+                    innerHTML: '',
+                    innerContent: []
+                }
+            ] );
         } );
 
         test( 'void block with attributes', () => {
-            expect( block( '<!-- wp:void {"a": "b"} /-->', 0 ) ).toEqual( [ 28, [ {
-                blockName: 'core/void',
-                attrs: { a: 'b' },
-                innerBlocks: [],
-                innerHTML: '',
-                innerContent: []
-            } ] ] );
+            expect( block( '<!-- wp:void {"a": "b"} /-->', 0 ) ).toEqual( [
+                28,
+                {
+                    blockName: 'core/void',
+                    attrs: { a: 'b' },
+                    innerBlocks: [],
+                    innerHTML: '',
+                    innerContent: []
+                }
+            ] );
         } );
 
         test( 'balanced block', () => {
-            expect( block( '<!-- wp:a --><!-- /wp:a -->', 0 ) ).toEqual( [ 27, [  {
-                blockName: 'core/a',
-                attrs: {},
-                innerBlocks: [],
-                innerHTML: '',
-                innerContent: []
-            } ] ] );
+            expect( block( '<!-- wp:a --><!-- /wp:a -->', 0 ) ).toEqual( [
+                27,
+                {
+                    blockName: 'core/a',
+                    attrs: {},
+                    innerBlocks: [],
+                    innerHTML: '',
+                    innerContent: []
+                }
+            ] );
         } );
 
         test( 'balanced block with attributes', () => {
-            expect( block( '<!-- wp:a {"a": "b"} --><!-- /wp:a -->', 0 ) ).toEqual( [ 38, [ {
-                blockName: 'core/a',
-                attrs: { a: 'b' },
-                innerBlocks: [],
-                innerHTML: '',
-                innerContent: []
-            } ] ] );
+            expect( block( '<!-- wp:a {"a": "b"} --><!-- /wp:a -->', 0 ) ).toEqual( [ 
+                38,
+                { 
+                    blockName: 'core/a',
+                    attrs: { a: 'b' },
+                    innerBlocks: [],
+                    innerHTML: '',
+                    innerContent: []
+                }
+            ] );
         } );
 
         test( 'balanced block with inner HTML', () => {
-            expect( block( '<!-- wp:a -->inside<!-- /wp:a -->', 0 ) ).toEqual( [ 33, [ {
-                blockName: 'core/a',
-                attrs: {},
-                innerBlocks: [],
-                innerHTML: 'inside',
-                innerContent: [ 'inside' ]
-            } ] ] );
+            expect( block( '<!-- wp:a -->inside<!-- /wp:a -->', 0 ) ).toEqual( [
+                33, 
+                {
+                    blockName: 'core/a',
+                    attrs: {},
+                    innerBlocks: [],
+                    innerHTML: 'inside',
+                    innerContent: [ 'inside' ]
+                }
+            ] );
         } );
 
         test( 'balanced block with inner block', () => {
-            expect( block( '<!-- wp:a --><!-- wp:void /--><!-- /wp:a -->', 0 ) ).toEqual( [ 44, [ 
+            expect( block( '<!-- wp:a --><!-- wp:void /--><!-- /wp:a -->', 0 ) ).toEqual( [ 
+                44, 
                 {
                     blockName: 'core/a',
                     attrs: {},
@@ -338,11 +368,12 @@ describe( 'parser components', () => {
                     innerHTML: '',
                     innerContent: [ null ]
                 }
-            ] ] );
+            ] );
         } );
 
         test( 'balanced block with inner block and HTML', () => {
-            expect( block( '<!-- wp:a -->before<!-- wp:void /--><!-- /wp:a -->', 0 ) ).toEqual( [ 50, [ 
+            expect( block( '<!-- wp:a -->before<!-- wp:void /--><!-- /wp:a -->', 0 ) ).toEqual( [
+                50, 
                 {
                     blockName: 'core/a',
                     attrs: {},
@@ -356,9 +387,10 @@ describe( 'parser components', () => {
                     innerHTML: 'before',
                     innerContent: [ 'before', null ]
                 }
-            ] ] );
+            ] );
 
-            expect( block( '<!-- wp:a -->before<!-- wp:b --><!-- /wp:b --><!-- /wp:a -->', 0 ) ).toEqual( [ 50, [ 
+            expect( block( '<!-- wp:a -->before<!-- wp:b --><!-- /wp:b --><!-- /wp:a -->', 0 ) ).toEqual( [
+                60,
                 {
                     blockName: 'core/a',
                     attrs: {},
@@ -372,7 +404,58 @@ describe( 'parser components', () => {
                     innerHTML: 'before',
                     innerContent: [ 'before', null ]
                 }
-            ] ] );
+            ] );
+        } );
+    } );
+
+    describe( 'block opener', () => {
+        test( 'basic opener', () => {
+            expect( blockOpener( '<!-- wp:block -->', 0 ) ).toEqual( [
+                17,
+                [ 'core/block', {}, false ]
+            ] );
+        } );
+
+        test( 'void opener', () => {
+            expect( blockOpener( '<!-- wp:block /-->', 0 ) ).toEqual( [
+                18,
+                [ 'core/block', {}, true ]
+            ] );
+        } );
+
+        test( 'namespaced opener', () => {
+            expect( blockOpener( '<!-- wp:my/block -->', 0 ) ).toEqual( [
+                20,
+                [ 'my/block', {}, false ]
+            ] );
+        } );
+
+        test( 'opener with empty attributes', () => {
+            expect( blockOpener( '<!-- wp:block {} -->', 0 ) ).toEqual( [
+                20,
+                [ 'core/block', {}, false ]
+            ] );
+        } );
+
+        test( 'opener with non-empty attributes', () => {
+            expect( blockOpener( '<!-- wp:block {"a":5} -->', 0 ) ).toEqual( [
+                25,
+                [ 'core/block', { a: 5 }, false ]
+            ] );
+        } );
+
+        test( 'opener with invalid attributes', () => {
+            expect( blockOpener( '<!-- wp:block {a: 5} -->', 0 ) ).toBeNull();
+        } );
+    } );
+
+    describe( 'blockCloser', () => {
+        test( 'basic closer', () => {
+            expect( blockCloser( '<!-- /wp:block -->', 0 ) ).toEqual( [ 18, 'core/block' ] );
+        } );
+
+        test( 'namespaced closer', () => {
+            expect( blockCloser( '<!-- /wp:my/block -->', 0 ) ).toEqual( [ 21, 'my/block' ] );
         } );
     } );
 
