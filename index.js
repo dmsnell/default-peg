@@ -1,8 +1,31 @@
+const Y = g => ( f => f( f ) )( f => g( ( ...args ) => f( f )( ...args ) ) );
+const memoize = f => {
+	const cache = new Map();
+	let lastDocument;
+
+	return ( doc, idx = 0 ) => {
+		if ( doc !== lastDocument ) {
+			lastDocument = doc;
+			cache.clear();
+		}
+
+		if ( ! cache.has( idx ) ) {
+			cache.set( idx, f( doc, idx ) );
+		}
+
+		const r = cache.get( idx );
+
+		return r;
+	};
+}
+const F = f => memoize( Y( f ) );
+// const F = f => Y( f );
+
 /////////////////////////////////////////////////////////////////////
 /// Parsers
 /////////////////////////////////////////////////////////////////////
 
-function blockList( document, index ) {
+var blockList = F( blockList => function( document, index ) {
 	const blocks = zeroOrMore( choice( block, sequence( not( block ), any ) ) )( document, index );
 
 	if ( ! blocks ) {
@@ -44,9 +67,9 @@ function blockList( document, index ) {
 	}
 
 	return [ document.length, output ];
-};
+} );
 
-function block( document, index ) {
+var block = F( block => function block( document, index ) {
 	const opener = choice( voidBlockOpener, blockOpener )( document, index );
 
 	if ( ! opener ) {
@@ -127,9 +150,9 @@ function block( document, index ) {
 			innerContent: innerContent
 		}
 	]
-};
+} );
 
-function blockCloser( document, index ) {
+var blockCloser = F( blockCloser => function blockCloser( document, index ) {
 	const closer = /<!--\s+\/wp:([a-z][a-z0-9_-]*\/)?([a-z][a-z0-9_-]*)\s+-->/g;
 	closer.lastIndex = index;
 	const closing = closer.exec( document );
@@ -144,22 +167,22 @@ function blockCloser( document, index ) {
 	const blockName = namespace + nameMatch;
 
 	return [ closer.lastIndex, blockName ];
-};
+} );
 
-function blockOpener( document, index ) {
+var blockOpener = F( blockOpener => function blockOpener( document, index ) {
 	return choice( voidBlockOpener, nonVoidBlockOpener )( document, index );
-}
+} );
 
-function nonVoidBlockOpener( d, i ) {
+var nonVoidBlockOpener = F( nonVoidBlockOpener => function ( d, i ) {
 	const s = sequence(
 		commonBlockOpener,
 		commentCloser,
 	)( d, i );
 
 	return s ? [ s[ 0 ], s[ 1 ][ 0 ].concat( false ) ] : null;
-}
+} );
 
-function voidBlockOpener( d, i ) {
+var voidBlockOpener = F( voidBlockOpener => function ( d, i ) {
 	const s = sequence(
 		commonBlockOpener,
 		( doc, idx ) => patternMatch( doc, idx, /\//g ),
@@ -167,9 +190,9 @@ function voidBlockOpener( d, i ) {
 	)( d, i );
 
 	return s ? [ s[ 0 ], s[ 1 ][ 0 ].concat( true ) ] : null;
-}
+} );
 
-function commonBlockOpener( document, index ) {
+var commonBlockOpener = F( commonBlockOpener => function ( document, index ) {
 	const opener = /<!--\s+wp:([a-z][a-z0-9_-]*\/)?([a-z][a-z0-9_-]*)\s+({(?:[^}]+|}+(?=})|(?!}\s+(?:\/)?-->)[^])*?}\s+)?/g;
 	opener.lastIndex = index;
 	const opening = opener.exec( document );
@@ -193,11 +216,11 @@ function commonBlockOpener( document, index ) {
 	}
 
 	return [ opener.lastIndex, [ blockName, attrs ] ];
-};
+} );
 
-function commentCloser( document, index ) {
+var commentCloser = F( commentCloser => function( document, index ) {
 	return patternMatch( document, index, /-->/g );
-};
+} );
 
 /////////////////////////////////////////////////////////////////////
 /// Helpers
@@ -207,9 +230,9 @@ function any( document, index ) {
 	return index < document.length ? [ index + 1, document[ index ] ] : null;
 }
 
-function whitespace( document, index ) {
+var whitespace = F( whitespace => function( document, index ) {
 	return patternMatch( document, index, /\s+/g );
-}
+} );
 
 function freeform( document, start, end ) {
 	const html = document.slice( start, end );
