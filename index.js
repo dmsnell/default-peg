@@ -2,7 +2,7 @@
 /// Parsers
 /////////////////////////////////////////////////////////////////////
 
-const blockList = augment( function blockList( document, index ) {
+function blockList( document, index ) {
 	const blocks = zeroOrMore( choice( block, sequence( not( block ), any ) ) )( document, index );
 
 	if ( ! blocks ) {
@@ -44,11 +44,11 @@ const blockList = augment( function blockList( document, index ) {
 	}
 
 	return [ document.length, output ];
-} );
+};
 
-const block = augment( function block( document, index ) {
-	const opener = blockOpener( document, index );
-	
+function block( document, index ) {
+	const opener = choice( voidBlockOpener, blockOpener )( document, index );
+
 	if ( ! opener ) {
 		return null;
 	}
@@ -71,12 +71,10 @@ const block = augment( function block( document, index ) {
 		]
 	}
 
-	const innerBlockPairs = zeroOrMore(
-		choice(
-			block,
-			sequence( not( block ), not( blockCloser ), any )
-		) 
-	)( document, openerEnd );
+	const innerBlockPairs = zeroOrMore( choice(
+		block,
+		sequence( not( block ), not( blockCloser ), any )
+	) )( document, openerEnd );
 
 	let innerHTML = '';
 	const innerBlocks = [];
@@ -129,9 +127,9 @@ const block = augment( function block( document, index ) {
 			innerContent: innerContent
 		}
 	]
-} );
+};
 
-var blockCloser = augment( function blockOpener( document, index ) {
+function blockCloser( document, index ) {
 	const closer = /<!--\s+\/wp:([a-z][a-z0-9_-]*\/)?([a-z][a-z0-9_-]*)\s+-->/g;
 	closer.lastIndex = index;
 	const closing = closer.exec( document );
@@ -146,10 +144,33 @@ var blockCloser = augment( function blockOpener( document, index ) {
 	const blockName = namespace + nameMatch;
 
 	return [ closer.lastIndex, blockName ];
-} );
+};
 
-const blockOpener = augment( function blockOpener( document, index ) {
-	const opener = /<!--\s+wp:([a-z][a-z0-9_-]*\/)?([a-z][a-z0-9_-]*)\s+({(?:[^}]+|}+(?=})|(?!}\s+-->)[^])*?}\s+)?(\/)?-->/g;
+function blockOpener( document, index ) {
+	return choice( voidBlockOpener, nonVoidBlockOpener )( document, index );
+}
+
+function nonVoidBlockOpener( d, i ) {
+	const s = sequence(
+		commonBlockOpener,
+		commentCloser,
+	)( d, i );
+
+	return s ? [ s[ 0 ], s[ 1 ][ 0 ].concat( false ) ] : null;
+}
+
+function voidBlockOpener( d, i ) {
+	const s = sequence(
+		commonBlockOpener,
+		( doc, idx ) => patternMatch( doc, idx, /\//g ),
+		commentCloser,
+	)( d, i );
+
+	return s ? [ s[ 0 ], s[ 1 ][ 0 ].concat( true ) ] : null;
+}
+
+function commonBlockOpener( document, index ) {
+	const opener = /<!--\s+wp:([a-z][a-z0-9_-]*\/)?([a-z][a-z0-9_-]*)\s+({(?:[^}]+|}+(?=})|(?!}\s+(?:\/)?-->)[^])*?}\s+)?/g;
 	opener.lastIndex = index;
 	const opening = opener.exec( document );
 
@@ -160,9 +181,7 @@ const blockOpener = augment( function blockOpener( document, index ) {
 	const namespaceMatch = opening[ 1 ];
 	const nameMatch = opening[ 2 ];
 	const attrsMatch = opening[ 3 ];
-	const voidMatch = opening[ 4 ];
 
-	const isVoid = !! voidMatch;
 	const namespace = namespaceMatch || 'core/';
 	const blockName = namespace + nameMatch;
 	const hasAttrs = !! attrsMatch;
@@ -173,8 +192,12 @@ const blockOpener = augment( function blockOpener( document, index ) {
 		return null;
 	}
 
-	return [ opener.lastIndex, [ blockName, attrs, isVoid ] ];
-} );
+	return [ opener.lastIndex, [ blockName, attrs ] ];
+};
+
+function commentCloser( document, index ) {
+	return patternMatch( document, index, /-->/g );
+};
 
 /////////////////////////////////////////////////////////////////////
 /// Helpers
@@ -221,7 +244,7 @@ function zeroOrMore( parser ) {
 		let lastIndex = index;
 		let thing = parser( document, lastIndex );
 
-		while ( thing ) {
+		while ( thing && lastIndex < document.length) {
 			lastIndex = thing[ 0 ];
 			things = things.concat( Array.isArray( thing[ 1 ] ) ? [ thing[ 1 ] ] : thing[ 1 ] );
 
@@ -242,7 +265,7 @@ function oneOrMore( parser ) {
 			return null;
 		}
 
-		while ( thing ) {
+		while ( thing && lastIndex < document.length) {
 			lastIndex = thing[ 0 ];
 			things = things.concat( Array.isArray( thing[ 1 ] ) ? [ thing[ 1 ] ] : thing[ 1 ] );
 
@@ -267,7 +290,7 @@ function choice( ...parsers ) {
 
 	parser.displayName = `choice: [${ parsers.map( p => p.name ).join( ' / ' ) }]`;
 
-	return augment( parser );
+	return parser;
 }
 
 function not( parser ) {
@@ -279,7 +302,7 @@ function not( parser ) {
 }
 
 function sequence( ...parsers ) {
-	return ( document, index ) => {
+	const parser = ( document, index ) => {
 		let things = [];
 		let lastIndex = index;
 		let thing;
@@ -293,28 +316,16 @@ function sequence( ...parsers ) {
 
 			if ( lastIndex !== thing[ 0 ] ) {
 				things = things.concat( Array.isArray( thing[ 1 ] ) ? [ thing[ 1 ] ] : thing[ 1 ] );
+				lastIndex = thing[ 0 ];
 			}
-
-			lastIndex = thing[ 0 ];
 		}
 
 		return [ lastIndex, things ];
 	}
-}
 
-/////////////////////////////////////////////////////////////////////
-/// Wrappers
-/////////////////////////////////////////////////////////////////////
+	parser.displayName = `sequence: [${ parsers.map( p => p.displayName || p.name || p ).join( ' -> ' ) }]`;
 
-function augment( f ) {
-	return f;
-
-	return ( ...args ) => {
-		console.log( `Entering ${ f.displayName || f.name } at ${ args[ 1 ] }` );
-		const r = f( ...args );
-		console.log( `Returned from ${ f.name }:`, r );
-		return r;
-	};
+	return parser;
 }
 
 /////////////////////////////////////////////////////////////////////
